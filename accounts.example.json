@@ -1,0 +1,14 @@
+[
+  {
+    "id": "acc_primary",
+    "username": "user1@bravo.com.vn",
+    "password": "PASSWORD_1_HERE",
+    "baseUrl": "https://chat.bravogen.io.vn"
+  },
+  {
+    "id": "acc_secondary",
+    "username": "user2@bravo.com.vn",
+    "password": "PASSWORD_2_HERE",
+    "baseUrl": "https://chat.bravogen.io.vn"
+  }
+]

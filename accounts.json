@@ -1,0 +1,8 @@
+[
+  {
+    "id": "acc_primary",
+    "username": "YOUR_BRAVO_USERNAME",
+    "password": "YOUR_BRAVO_PASSWORD",
+    "baseUrl": "https://chat.bravogen.io.vn"
+  }
+]

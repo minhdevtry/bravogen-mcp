@@ -1,0 +1,20 @@
+services:
+  bravogen-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bravogen-mcp:latest
+    container_name: bravogen-mcp-server
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount file cấu hình đa tài khoản của bạn vào container
+      - ./accounts.json:/app/accounts.json:ro
+      - ./data:/app/data:ro
+    environment:
+      - BRAVOGEN_BASE_URL=https://chat.bravogen.io.vn
+      - BRAVOGEN_AUTO_WAIT=true
+      - BRAVOGEN_MAX_WAIT_SECONDS=90
+      # Hoặc truyền danh sách tài khoản qua env:
+      # - BRAVOGEN_ACCOUNTS=user1:pass1,user2:pass2
