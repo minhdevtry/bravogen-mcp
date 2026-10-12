@@ -152,3 +152,42 @@
 
 - `POST /v1/files`: Multipart form-data with field `file` (up to 50MB).
 - Returns uploaded file metadata `{ url, name, mime_type, size }`.
+
+---
+
+## 6. Export & Offline Knowledge Sync (0-Credit Endpoints)
+
+### 6.1 Full Account Data Export (`GET /v1/me/export`)
+- **Headers**: `Authorization: Bearer <access_token>`
+- **Description**: Trích xuất toàn bộ dữ liệu tài khoản bao gồm danh sách hội thoại, nội dung tin nhắn và cây suy luận reasoning. **Không tính lượt gọi và không trừ token vào hạn mức (0 credit).**
+- **Response** (`200 OK`):
+  ```json
+  {
+    "user": { "id": "...", "name": "...", "email": "..." },
+    "exported_at": "2026-10-12T07:46:27.765103+00:00",
+    "scope": "all",
+    "conversations": [
+      {
+        "id": "uuid",
+        "title": "Cài đặt Linux",
+        "model": "bravo-insight",
+        "created_at": "...",
+        "messages": [
+          {
+            "id": "msg-uuid",
+            "role": "user",
+            "text": "...",
+            "created_at": "..."
+          }
+        ]
+      }
+    ]
+  }
+  ```
+
+### 6.2 App Configuration (`GET /api/app-config`)
+- Trả về thông tin xác thực hệ thống (LDAP, Google SSO) và giới hạn file upload (`max_upload_bytes: 52428800`).
+
+### 6.3 Shared Links (`GET /v1/me/shares` & `GET /v1/share/{id}`)
+- `GET /v1/me/shares`: Danh sách các liên kết chia sẻ công khai của người dùng.
+- `GET /v1/share/{id}`: Truy cập nội dung hội thoại chia sẻ công khai (không cần xác thực).

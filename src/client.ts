@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import type {
   UserProfile,
   RateLimitStatus,
@@ -42,6 +45,26 @@ export interface ConversationDetail {
     is_canceled?: boolean;
   }>;
 }
+export interface ExportUserDataResponse {
+  user?: UserProfile;
+  exported_at?: string;
+  scope?: string;
+  conversations: Array<{
+    id: string;
+    title: string;
+    model: string;
+    created_at: string;
+    messages: Array<{
+      id: string;
+      role: string;
+      text?: string;
+      reasoning?: string;
+      created_at: string;
+      is_error?: boolean;
+      is_canceled?: boolean;
+    }>;
+  }>;
+}
 
 function delay(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -62,6 +85,9 @@ export class BravoGenClient {
   private autoWaitOnRateLimit: boolean;
   private maxWaitSeconds: number;
   private isAuthenticating: Promise<boolean> | null = null;
+  private tokenFilePath: string | null = null;
+  private cachedRateLimit: { data: RateLimitStatus; expiresAt: number } | null = null;
+  private rateLimitTtlMs: number = 30000;
 
   constructor(options: ClientOptions = {}) {
     this.baseUrl = (options.baseUrl || "https://chat.bravogen.io.vn").replace(/\/+$/, "");
@@ -72,12 +98,53 @@ export class BravoGenClient {
     this.maxRetryDelayMs = options.maxRetryDelayMs ?? 10000;
     this.autoWaitOnRateLimit = options.autoWaitOnRateLimit ?? true;
     this.maxWaitSeconds = options.maxWaitSeconds ?? 90;
+    this.tokenFilePath =
+      options.tokenFilePath ||
+      (this.username
+        ? path.resolve(os.homedir(), ".bravogen", `.token_${this.username.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`)
+        : null);
+    this.loadTokenFromDisk();
+  }
+
+  private loadTokenFromDisk(): void {
+    if (!this.tokenFilePath || !fs.existsSync(this.tokenFilePath)) return;
+    try {
+      const raw = fs.readFileSync(this.tokenFilePath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.accessToken && parsed.tokenExpiresAt && Date.now() < parsed.tokenExpiresAt - 60000) {
+        this.accessToken = String(parsed.accessToken);
+        this.refreshToken = parsed.refreshToken ? String(parsed.refreshToken) : null;
+        this.tokenExpiresAt = Number(parsed.tokenExpiresAt);
+      }
+    } catch {
+      // Fall back to login
+    }
+  }
+
+  private saveTokenToDisk(): void {
+    if (!this.tokenFilePath || !this.accessToken) return;
+    try {
+      const dir = path.dirname(this.tokenFilePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        this.tokenFilePath,
+        JSON.stringify({
+          accessToken: this.accessToken,
+          refreshToken: this.refreshToken,
+          tokenExpiresAt: this.tokenExpiresAt,
+        }),
+        { mode: 0o600 }
+      );
+    } catch {
+      // Non-fatal
+    }
   }
 
   public setTokens(access: string, refresh: string): void {
     this.accessToken = access;
     this.refreshToken = refresh;
     this.tokenExpiresAt = Date.now() + 14 * 60 * 1000; // ~14 min
+    this.saveTokenToDisk();
   }
 
   /**
@@ -138,6 +205,7 @@ export class BravoGenClient {
       this.accessToken = data.access_token;
       this.refreshToken = data.refresh_token;
       this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
+      this.saveTokenToDisk();
       return true;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -170,6 +238,7 @@ export class BravoGenClient {
         this.refreshToken = data.refresh_token;
       }
       this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
+      this.saveTokenToDisk();
       return true;
     } catch {
       return false;
@@ -286,7 +355,11 @@ export class BravoGenClient {
   /**
    * "Soi limit" - Inspect live rate limits with full mathematical calculations
    */
-  public async getRateLimitStatus(): Promise<RateLimitStatus | null> {
+  public async getRateLimitStatus(force: boolean = false): Promise<RateLimitStatus | null> {
+    if (!force && this.cachedRateLimit && Date.now() < this.cachedRateLimit.expiresAt) {
+      return this.cachedRateLimit.data;
+    }
+
     const res = await this.request<RateLimitStatus>("/v1/rate_limit/status");
     if (!res.data || !res.data.windows) return null;
 
@@ -319,6 +392,11 @@ export class BravoGenClient {
       recommendedWaitSeconds: recWait,
     };
 
+    this.cachedRateLimit = {
+      data: res.data,
+      expiresAt: Date.now() + this.rateLimitTtlMs,
+    };
+
     return res.data;
   }
 
@@ -342,6 +420,10 @@ export class BravoGenClient {
 
   public async getConversation(id: string): Promise<ConversationDetail | null> {
     const res = await this.request<ConversationDetail>(`/v1/conversations/${encodeURIComponent(id)}`);
+    return res.data;
+  }
+  public async exportUserData(): Promise<ExportUserDataResponse | null> {
+    const res = await this.request<ExportUserDataResponse>("/v1/me/export");
     return res.data;
   }
 
@@ -418,6 +500,8 @@ export class BravoGenClient {
       limitSummary = `[Quota: 5h: ${limitStatus.computed.remaining5hRequests} reqs left, 7d: ${limitStatus.computed.remaining7dRequests} reqs left]`;
     }
 
+    this.recordCallCompleted();
+
     return {
       answer,
       reasoning,
@@ -425,5 +509,15 @@ export class BravoGenClient {
       id: res.data.id,
       rateLimitSummary: limitSummary,
     };
+  }
+  public recordCallCompleted(): void {
+    if (this.cachedRateLimit?.data.computed) {
+      const c = this.cachedRateLimit.data.computed;
+      c.remaining5hRequests = Math.max(0, c.remaining5hRequests - 1);
+      c.remaining7dRequests = Math.max(0, c.remaining7dRequests - 1);
+      if (c.remaining5hRequests <= 0 || c.remaining7dRequests <= 0) {
+        c.isThrottled = true;
+      }
+    }
   }
 }

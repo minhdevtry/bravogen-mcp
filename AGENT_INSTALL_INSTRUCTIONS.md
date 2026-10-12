@@ -19,8 +19,8 @@ npm install -g ./bravogen-mcp-1.0.0.tgz
 *(Nếu môi trường của tôi không cho phép cài đặt toàn cục, hãy sử dụng trực tiếp file đã build sẵn `dist/index.js` qua lệnh `node <ĐƯỜNG_DẪN_TUYỆT_ĐỐI_ĐẾN_DIST_INDEX_JS>`).*
 
 ### Bước 3: Cấu hình tài khoản người dùng
-1. Kiểm tra xem file `accounts.json` trong thư mục dự án (hoặc tại `~/.bravogen/accounts.json`) đã được tôi điền thông tin tài khoản thật chưa.
-2. Nếu vẫn đang là tài khoản mẫu (`YOUR_BRAVO_USERNAME`), hãy hỏi tôi tên tài khoản và mật khẩu của BravoGen nội bộ, sau đó ghi thông tin vào `accounts.json` với cấu trúc:
+1. Để bảo mật và tránh vô tình commit mật khẩu vào Git repository, ghi thông tin tài khoản trực tiếp vào file cá nhân `~/.bravogen/accounts.json` (hoặc `accounts.json` trong thư mục dự án):
+2. Cấu trúc nội dung file:
 ```json
 [
   {

@@ -19,7 +19,12 @@ interface JsonRpcResponse {
 async function runMcpTest() {
   console.log("=== Starting BravoGen Multi-Account MCP Smoke Test ===");
 
-  const serverProcess = spawn("node", [path.resolve(process.cwd(), "dist/index.js")], {
+  const serverPath =
+    typeof import.meta.dirname === "string"
+      ? path.resolve(import.meta.dirname, "../dist/index.js")
+      : path.resolve(process.cwd(), "dist/index.js");
+
+  const serverProcess = spawn("node", [serverPath], {
     stdio: ["pipe", "pipe", "inherit"],
     env: { ...process.env },
   });
@@ -128,6 +133,14 @@ async function runMcpTest() {
   });
   console.log(searchRes.result?.content?.[0]?.text);
 
+  const isFast = process.argv.includes("--fast");
+  if (isFast) {
+    serverProcess.kill();
+    console.log("\n=== Fast Smoke Test Passed Successfully! (~0.5s, không tốn quota 5h) ===");
+    console.log("(Để test cả luồng AI trực tiếp, hãy chạy: node test/smoke_test.ts --full hoặc ./test-ket-noi.sh --full)");
+    return;
+  }
+
   // 10. Test bravogen_ask_knowledge (live AI query with smart pool rotation)
   console.log("\n[Test 10] Testing bravogen_ask_knowledge with live AI pool execution...");
   const askRes = await callRpc("tools/call", {
@@ -143,7 +156,6 @@ async function runMcpTest() {
   serverProcess.kill();
   console.log("\n=== All Multi-Account Smoke Tests Passed Successfully! ===");
 }
-
 runMcpTest().catch((err: unknown) => {
   console.error("Test failed:", err);
   process.exit(1);

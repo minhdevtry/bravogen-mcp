@@ -29,31 +29,45 @@ Hỗ trợ **đa tài khoản (Multi-Account Pool)** với cơ chế điều ph�
 
 ---
 
-## 🛠️ Danh Sách 11 Công Cụ (MCP Tools)
+## 🛠️ Danh Sách 12 Công Cụ (MCP Tools)
 
-| Tên Công Cụ | Mô Tả |
-| :--- | :--- |
-| `bravogen_ask_knowledge` | Hỏi đáp kỹ thuật chuyên sâu qua `bravo-insight` (tự động xoay tua tài khoản, kèm reasoning tư duy). |
-| `bravogen_pool_status` | **Giám sát Pool Đa Tài Khoản**: Xem số tài khoản khỏe mạnh, số tài khoản chạm hạn, tổng lượt gọi còn lại toàn pool. |
-| `bravogen_rate_limit_status` | **Soi Limit**: Xem chi tiết phần trăm quota đã dùng, tokens và requests còn lại, mốc thời gian reset. |
-| `bravogen_get_knowledge_diagrams` | Lấy các biểu đồ kiến trúc hệ thống và quy trình nghiệp vụ Bravo 10 định dạng Mermaid có sẵn. |
-| `bravogen_get_procedure_docs` | Tra cứu cú pháp, vai trò và ngữ cảnh sử dụng của các Stored Procedures (`usp_*`). |
-| `bravogen_get_table_schema` | Tra cứu cấu trúc, vai trò nghiệp vụ và các cột dữ liệu của các bảng Bravo ERP (`B00*`, `B10*`, `B30*`). |
-| `bravogen_get_layout_xml_reference` | Tra cứu quy chuẩn khai báo Layout XML và các Class Evaluator (`BravoEvaluator`, `BravoMoneyEvaluator`, ...). |
-| `bravogen_search_knowledge` | Tìm kiếm toàn văn trong toàn bộ kho tri thức, mã nguồn mẫu, câu lệnh SQL và lịch sử trao đổi. |
-| `bravogen_generate_diagram` | Yêu cầu AI tự động sinh biểu đồ Mermaid mới cho bất kỳ chủ đề hoặc nghiệp vụ Bravo nào theo yêu cầu. |
-| `bravogen_list_conversations` | Liệt kê danh sách các cuộc hội thoại kỹ thuật trên máy chủ BravoGen. |
-| `bravogen_get_conversation` | Lấy toàn bộ nội dung, câu hỏi, câu trả lời và cây suy luận của một cuộc hội thoại cụ thể. |
+| Tên Công Cụ | Tốn Quota? | Mô Tả |
+| :--- | :---: | :--- |
+| `bravogen_sync_knowledge` | 🟢 **0 Credit** | **Đồng Bộ Tri Thức**: Xuất toàn văn tất cả cuộc hội thoại, mã code và cây suy luận từ server về CSDL offline cục bộ mà không tốn credit. |
+| `bravogen_ask_knowledge` | 🟡 **0 hoặc 1** | Hỏi đáp kỹ thuật chuyên sâu qua `bravo-insight` (hỗ trợ `cache_first: true` để trả lời ngay từ kho tri thức với 0 credit). |
+| `bravogen_pool_status` | 🟢 **0 Credit** | **Giám sát Pool Đa Tài Khoản**: Xem số tài khoản khỏe mạnh, số tài khoản chạm hạn, tổng lượt gọi còn lại toàn pool. |
+| `bravogen_rate_limit_status` | 🟢 **0 Credit** | **Soi Limit**: Xem chi tiết phần trăm quota đã dùng, tokens và requests còn lại, mốc thời gian reset. |
+| `bravogen_get_knowledge_diagrams` | 🟢 **0 Credit** | Lấy các biểu đồ kiến trúc hệ thống và quy trình nghiệp vụ Bravo 10 định dạng Mermaid có sẵn. |
+| `bravogen_get_procedure_docs` | 🟢 **0 Credit** | Tra cứu cú pháp, vai trò và ngữ cảnh sử dụng của các Stored Procedures (`usp_*`). |
+| `bravogen_get_table_schema` | 🟢 **0 Credit** | Tra cứu cấu trúc, vai trò nghiệp vụ và các cột dữ liệu của các bảng Bravo ERP (`B00*`, `B10*`, `B30*`). |
+| `bravogen_get_layout_xml_reference` | 🟢 **0 Credit** | Tra cứu quy chuẩn khai báo Layout XML và các Class Evaluator (`BravoEvaluator`, `BravoMoneyEvaluator`, ...). |
+| `bravogen_search_knowledge` | 🟢 **0 Credit** | Tìm kiếm toàn văn trong toàn bộ kho tri thức, mã nguồn mẫu, câu lệnh SQL và lịch sử trao đổi. |
+| `bravogen_generate_diagram` | 🔴 **1 Credit** | Yêu cầu AI tự động sinh biểu đồ Mermaid mới cho bất kỳ chủ đề hoặc nghiệp vụ Bravo nào theo yêu cầu. |
+| `bravogen_list_conversations` | 🟢 **0 Credit** | Liệt kê danh sách các cuộc hội thoại kỹ thuật trên máy chủ BravoGen. |
+| `bravogen_get_conversation` | 🟢 **0 Credit** | Lấy toàn bộ nội dung, câu hỏi, câu trả lời và cây suy luận của một cuộc hội thoại cụ thể. |
 
+---
+
+## 💡 Chiến Lược Gọi MCP Không Mất Credit Dành Cho Dev
+
+1. **Đồng bộ tri thức định kỳ (`bravogen_sync_knowledge`)**:
+   - Khai thác endpoint `/v1/me/export` trích xuất toàn bộ câu hỏi và câu trả lời chất lượng cao từ giao diện web BravoGen về máy.
+   - Thao tác này tiêu tốn **0 credit** và chỉ mất ~1-2 giây.
+2. **Sử dụng Cache-First trong `bravogen_ask_knowledge`**:
+   - Khi gọi `bravogen_ask_knowledge` với tham số `cache_first: true`, MCP sẽ tìm trong kho tri thức cục bộ trước. Nếu đã có lời giải, kết quả trả về ngay (< 5ms) mà **không gửi request lên server**.
+3. **Ưu tiên các công cụ tra cứu offline**:
+   - Tra cứu Stored Procedure, bảng dữ liệu, Layout XML qua `bravogen_get_procedure_docs`, `bravogen_get_table_schema`, `bravogen_get_layout_xml_reference` hoàn toàn miễn phí 100%.
+4. **Multi-Account Quota Pool**:
+   - Cấu hình nhiều tài khoản nội bộ vào `~/.bravogen/accounts.json` để nhân số lượt gọi 5h lên gấp N lần (20 req * N tài khoản).
 ---
 
 ## ⚙️ Hướng Dẫn Cấu Hình Đa Tài Khoản Cho User Tự Host
 
 Hệ thống hỗ trợ 3 cách cấu hình tài khoản (tùy bạn lựa chọn):
 
-### Cách 1: Sử dụng file `accounts.json` (Khuyên dùng khi tự host)
-Tạo file `accounts.json` trong thư mục gốc của server (hoặc copy từ `accounts.example.json`):
-
+### Cách 1: Lưu trữ an toàn ngoài Git tại `~/.bravogen/accounts.json` (Khuyên dùng)
+Để tránh vô tình commit mật khẩu vào Git repository, bạn nên tạo file cấu hình tài khoản tại thư mục cá nhân:
+`~/.bravogen/accounts.json` (phân quyền `chmod 600`):
 ```json
 [
   {

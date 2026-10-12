@@ -1,17 +1,20 @@
 // src/index.ts
 import * as readline from "node:readline";
-import * as fs2 from "node:fs";
-import * as path2 from "node:path";
+import * as fs3 from "node:fs";
+import * as path3 from "node:path";
 
 // src/pool.ts
+import * as fs2 from "node:fs";
+import * as path2 from "node:path";
+import * as os2 from "node:os";
+
+// src/client.ts
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-
-// src/client.ts
 function delay(ms) {
-  const { promise, resolve } = Promise.withResolvers();
-  setTimeout(resolve, ms);
+  const { promise, resolve: resolve2 } = Promise.withResolvers();
+  setTimeout(resolve2, ms);
   return promise;
 }
 
@@ -28,6 +31,9 @@ class BravoGenClient {
   autoWaitOnRateLimit;
   maxWaitSeconds;
   isAuthenticating = null;
+  tokenFilePath = null;
+  cachedRateLimit = null;
+  rateLimitTtlMs = 30000;
   constructor(options = {}) {
     this.baseUrl = (options.baseUrl || "https://chat.bravogen.io.vn").replace(/\/+$/, "");
     this.username = options.username || process.env.BRAVOGEN_USERNAME || "";
@@ -37,11 +43,41 @@ class BravoGenClient {
     this.maxRetryDelayMs = options.maxRetryDelayMs ?? 1e4;
     this.autoWaitOnRateLimit = options.autoWaitOnRateLimit ?? true;
     this.maxWaitSeconds = options.maxWaitSeconds ?? 90;
+    this.tokenFilePath = options.tokenFilePath || (this.username ? path.resolve(os.homedir(), ".bravogen", `.token_${this.username.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`) : null);
+    this.loadTokenFromDisk();
+  }
+  loadTokenFromDisk() {
+    if (!this.tokenFilePath || !fs.existsSync(this.tokenFilePath))
+      return;
+    try {
+      const raw = fs.readFileSync(this.tokenFilePath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.accessToken && parsed.tokenExpiresAt && Date.now() < parsed.tokenExpiresAt - 60000) {
+        this.accessToken = String(parsed.accessToken);
+        this.refreshToken = parsed.refreshToken ? String(parsed.refreshToken) : null;
+        this.tokenExpiresAt = Number(parsed.tokenExpiresAt);
+      }
+    } catch {}
+  }
+  saveTokenToDisk() {
+    if (!this.tokenFilePath || !this.accessToken)
+      return;
+    try {
+      const dir = path.dirname(this.tokenFilePath);
+      if (!fs.existsSync(dir))
+        fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.tokenFilePath, JSON.stringify({
+        accessToken: this.accessToken,
+        refreshToken: this.refreshToken,
+        tokenExpiresAt: this.tokenExpiresAt
+      }), { mode: 384 });
+    } catch {}
   }
   setTokens(access, refresh) {
     this.accessToken = access;
     this.refreshToken = refresh;
     this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
+    this.saveTokenToDisk();
   }
   async ensureAuthenticated(forceRefresh = false) {
     if (!forceRefresh && this.accessToken && Date.now() < this.tokenExpiresAt) {
@@ -84,6 +120,7 @@ class BravoGenClient {
       this.accessToken = data.access_token;
       this.refreshToken = data.refresh_token;
       this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
+      this.saveTokenToDisk();
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -108,6 +145,7 @@ class BravoGenClient {
         this.refreshToken = data.refresh_token;
       }
       this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
+      this.saveTokenToDisk();
       return true;
     } catch {
       return false;
@@ -191,7 +229,10 @@ class BravoGenClient {
       };
     }
   }
-  async getRateLimitStatus() {
+  async getRateLimitStatus(force = false) {
+    if (!force && this.cachedRateLimit && Date.now() < this.cachedRateLimit.expiresAt) {
+      return this.cachedRateLimit.data;
+    }
     const res = await this.request("/v1/rate_limit/status");
     if (!res.data || !res.data.windows)
       return null;
@@ -219,6 +260,10 @@ class BravoGenClient {
       isThrottled,
       recommendedWaitSeconds: recWait
     };
+    this.cachedRateLimit = {
+      data: res.data,
+      expiresAt: Date.now() + this.rateLimitTtlMs
+    };
     return res.data;
   }
   async getModels() {
@@ -236,6 +281,10 @@ class BravoGenClient {
   }
   async getConversation(id) {
     const res = await this.request(`/v1/conversations/${encodeURIComponent(id)}`);
+    return res.data;
+  }
+  async exportUserData() {
+    const res = await this.request("/v1/me/export");
     return res.data;
   }
   async chatCompletion(prompt, options = {}) {
@@ -285,6 +334,7 @@ class BravoGenClient {
     if (limitStatus?.computed) {
       limitSummary = `[Quota: 5h: ${limitStatus.computed.remaining5hRequests} reqs left, 7d: ${limitStatus.computed.remaining7dRequests} reqs left]`;
     }
+    this.recordCallCompleted();
     return {
       answer,
       reasoning,
@@ -293,12 +343,22 @@ class BravoGenClient {
       rateLimitSummary: limitSummary
     };
   }
+  recordCallCompleted() {
+    if (this.cachedRateLimit?.data.computed) {
+      const c = this.cachedRateLimit.data.computed;
+      c.remaining5hRequests = Math.max(0, c.remaining5hRequests - 1);
+      c.remaining7dRequests = Math.max(0, c.remaining7dRequests - 1);
+      if (c.remaining5hRequests <= 0 || c.remaining7dRequests <= 0) {
+        c.isThrottled = true;
+      }
+    }
+  }
 }
 
 // src/pool.ts
 function delay2(ms) {
-  const { promise, resolve: resolve2 } = Promise.withResolvers();
-  setTimeout(resolve2, ms);
+  const { promise, resolve: resolve3 } = Promise.withResolvers();
+  setTimeout(resolve3, ms);
   return promise;
 }
 
@@ -338,41 +398,29 @@ class AccountPool {
   }
   static loadConfig(configDir = process.cwd()) {
     const results = [];
-    const packageRoot = typeof import.meta.dirname === "string" ? path.resolve(import.meta.dirname, "..") : configDir;
-    const userHome = os.homedir();
+    const packageRoot = typeof import.meta.dirname === "string" ? path2.resolve(import.meta.dirname, "..") : configDir;
+    const userHome = os2.homedir();
     const candidateFiles = [
-      path.resolve(configDir, "accounts.json"),
-      path.resolve(configDir, "config.json"),
-      path.resolve(packageRoot, "accounts.json"),
-      path.resolve(userHome, ".bravogen/accounts.json"),
-      path.resolve(userHome, ".bravogen.json")
+      path2.resolve(configDir, "accounts.json"),
+      path2.resolve(configDir, "config.json"),
+      path2.resolve(packageRoot, "accounts.json"),
+      path2.resolve(userHome, ".bravogen/accounts.json"),
+      path2.resolve(userHome, ".bravogen.json")
     ];
     for (const p of candidateFiles) {
-      if (fs.existsSync(p)) {
+      if (fs2.existsSync(p)) {
         try {
-          const content = fs.readFileSync(p, "utf-8");
+          const content = fs2.readFileSync(p, "utf-8");
           const parsed = JSON.parse(content);
-          if (Array.isArray(parsed)) {
-            for (let i = 0;i < parsed.length; i++) {
-              const item = parsed[i];
+          const rawList = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && ("accounts" in parsed) && Array.isArray(parsed.accounts) ? parsed.accounts : null;
+          if (rawList) {
+            for (let i = 0;i < rawList.length; i++) {
+              const item = rawList[i];
               if (item && typeof item === "object" && "username" in item && "password" in item) {
                 const u = String(item.username);
                 const pwd = String(item.password);
-                const bUrl = "baseUrl" in item ? String(item.baseUrl) : undefined;
-                const id = "id" in item ? String(item.id) : `acc_${i + 1}_${u.split("@")[0]}`;
-                results.push({ id, username: u, password: pwd, baseUrl: bUrl });
-              }
-            }
-            if (results.length > 0) {
-              console.error(`[AccountPool] Loaded ${results.length} account(s) from ${p}`);
-              return results;
-            }
-          } else if (parsed && typeof parsed === "object" && "accounts" in parsed && Array.isArray(parsed.accounts)) {
-            for (let i = 0;i < parsed.accounts.length; i++) {
-              const item = parsed.accounts[i];
-              if (item && typeof item === "object" && "username" in item && "password" in item) {
-                const u = String(item.username);
-                const pwd = String(item.password);
+                if (u.toUpperCase() === "YOUR_BRAVO_USERNAME" || !u.trim() || !pwd.trim())
+                  continue;
                 const bUrl = "baseUrl" in item ? String(item.baseUrl) : undefined;
                 const id = "id" in item ? String(item.id) : `acc_${i + 1}_${u.split("@")[0]}`;
                 results.push({ id, username: u, password: pwd, baseUrl: bUrl });
@@ -443,9 +491,9 @@ class AccountPool {
     }
     return results;
   }
-  async updateAccountQuota(acc) {
+  async updateAccountQuota(acc, force = false) {
     try {
-      const status = await acc.client.getRateLimitStatus();
+      const status = await acc.client.getRateLimitStatus(force);
       acc.lastChecked = Date.now();
       if (status && status.computed) {
         acc.remaining5hRequests = status.computed.remaining5hRequests;
@@ -471,10 +519,9 @@ class AccountPool {
     if (this.accounts.length === 0)
       return null;
     const now = Date.now();
-    for (const acc of this.accounts) {
-      if (now - acc.lastChecked > 60000) {
-        await this.updateAccountQuota(acc);
-      }
+    const staleAccounts = this.accounts.filter((a) => now - a.lastChecked > 30000);
+    if (staleAccounts.length > 0) {
+      await Promise.allSettled(staleAccounts.map((a) => this.updateAccountQuota(a)));
     }
     const available = this.accounts.filter((a) => a.status === "healthy" && a.remaining5hRequests > 0);
     if (available.length > 0) {
@@ -486,16 +533,12 @@ class AccountPool {
       });
       return available[0];
     }
-    for (const acc of this.accounts) {
-      if (acc.resetsAt5h) {
-        const resetEpoch = new Date(acc.resetsAt5h).getTime();
-        if (now >= resetEpoch) {
-          await this.updateAccountQuota(acc);
-          if (acc.status === "healthy" && acc.remaining5hRequests > 0) {
-            return acc;
-          }
-        }
-      }
+    const resetCandidates = this.accounts.filter((a) => a.resetsAt5h && now >= new Date(a.resetsAt5h).getTime());
+    if (resetCandidates.length > 0) {
+      await Promise.allSettled(resetCandidates.map((a) => this.updateAccountQuota(a, true)));
+      const revived = this.accounts.find((a) => a.status === "healthy" && a.remaining5hRequests > 0);
+      if (revived)
+        return revived;
     }
     return null;
   }
@@ -571,9 +614,11 @@ class AccountPool {
       error: `All ${this.accounts.length} configured BravoGen accounts have exhausted their rate limits. Please wait for the earliest window reset.`
     };
   }
-  async getPoolOverview() {
-    for (const acc of this.accounts) {
-      await this.updateAccountQuota(acc);
+  async getPoolOverview(force = false) {
+    const now = Date.now();
+    const targets = this.accounts.filter((a) => force || now - a.lastChecked > 15000);
+    if (targets.length > 0) {
+      await Promise.allSettled(targets.map((a) => this.updateAccountQuota(a, force)));
     }
     const healthyCount = this.accounts.filter((a) => a.status === "healthy").length;
     const throttledCount = this.accounts.filter((a) => a.status === "throttled").length;
@@ -600,12 +645,12 @@ class AccountPool {
 }
 
 // src/index.ts
-var packageRoot = typeof import.meta.dirname === "string" ? path2.resolve(import.meta.dirname, "..") : process.cwd();
+var packageRoot = typeof import.meta.dirname === "string" ? path3.resolve(import.meta.dirname, "..") : process.cwd();
 var candidateKnowledgePaths = [
-  path2.resolve(packageRoot, "data/bravo_knowledge.json"),
-  path2.resolve(process.cwd(), "data/bravo_knowledge.json")
+  path3.resolve(packageRoot, "data/bravo_knowledge.json"),
+  path3.resolve(process.cwd(), "data/bravo_knowledge.json")
 ];
-var knowledgeDbPath = candidateKnowledgePaths.find((p) => fs2.existsSync(p)) || candidateKnowledgePaths[0];
+var knowledgeDbPath = candidateKnowledgePaths.find((p) => fs3.existsSync(p)) || candidateKnowledgePaths[0];
 var knowledgeDb = {
   version: "1.0.0",
   total_conversations: 0,
@@ -619,9 +664,9 @@ var knowledgeDb = {
   diagrams: [],
   conversations: []
 };
-if (fs2.existsSync(knowledgeDbPath)) {
+if (fs3.existsSync(knowledgeDbPath)) {
   try {
-    const raw = fs2.readFileSync(knowledgeDbPath, "utf-8");
+    const raw = fs3.readFileSync(knowledgeDbPath, "utf-8");
     knowledgeDb = JSON.parse(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -663,6 +708,11 @@ var TOOLS = [
           type: "boolean",
           default: true,
           description: "Có trả về nội dung suy luận logic từng bước (reasoning_content) không."
+        },
+        cache_first: {
+          type: "boolean",
+          default: false,
+          description: "Nếu bật true, ưu tiên tìm kiếm câu trả lời đã có trong kho tri thức cục bộ trước để không tiêu tốn credit AI."
         }
       },
       required: ["question"]
@@ -808,8 +858,93 @@ var TOOLS = [
       },
       required: ["conversation_id"]
     }
+  },
+  {
+    name: "bravogen_sync_knowledge",
+    description: "Đồng bộ toàn bộ lịch sử hỏi đáp, đoạn code mẫu và giải pháp kỹ thuật từ server BravoGen về cơ sở dữ liệu tri thức offline cục bộ (HOÀN TOÀN KHÔNG TỐN CREDIT/QUOTA). Sau khi đồng bộ, AI agent và lập trình viên có thể tra cứu toàn văn mọi giải pháp với tốc độ tức thì mà không mất thêm lượt gọi nào.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
   }
 ];
+var STANDARD_LAYOUT_CLASSES = {
+  bravomoneyevaluator: {
+    name: "BravoMoneyEvaluator",
+    desc: "Class Evaluator chuyên biệt cho tính toán tiền tệ, tài chính trong Bravo 10. Hỗ trợ tự động làm tròn theo đồng tiền (zResultDecimalRound), xử lý sai số làm tròn (zResultMarginValue), tính chiết khấu nhiều mức, thuế TTĐB và công thức phối hợp số lượng * đơn giá.",
+    properties: [
+      "zMoneyValue: Biểu thức giá trị tiền tệ (VD: ISNULL(UnitCost,0) * ISNULL(DiscountRate,0))",
+      "zNumberValue: Biểu thức giá trị số lượng hoặc tỷ lệ",
+      "zFormula: Công thức phối hợp định dạng placeholder (VD: {0}/(1+{1})*{1})",
+      "zResultDecimalRound: Làm tròn tiền tệ theo thiết lập loại tiền (Currency('DecimalRound'))",
+      "zResultMarginValue: Ngưỡng chấp nhận sai số làm tròn",
+      "DataMember: Tên cột dữ liệu đích nhận kết quả"
+    ],
+    example: `<Eval_DiscountAmount>
+    <ClassName>BravoMoneyEvaluator</ClassName>
+    <DataMember>DiscountAmount</DataMember>
+    <zResultDecimalRound>Currency('DecRound_VND')</zResultDecimalRound>
+    <zMoneyValue>OriginalUnitPrice - UnitPrice</zMoneyValue>
+    <zNumberValue>Quantity</zNumberValue>
+</Eval_DiscountAmount>`
+  },
+  bravoevaluator: {
+    name: "BravoEvaluator",
+    desc: "Bộ đánh giá biểu thức tổng quát của Bravo 10. Dùng tính toán các trường số học thông thường, biểu thức logic điều kiện (IIF, AND, OR), điều khiển ẩn hiện controls hoặc đặt giá trị mặc định.",
+    properties: [
+      "Expr / Value: Biểu thức toán học hoặc logic",
+      "DataMember: Cột nhận giá trị tính toán",
+      "Condition: Điều kiện kích hoạt",
+      "ColumnChanged: Danh sách cột theo dõi thay đổi để kích hoạt Evaluator"
+    ],
+    example: `<Eval_TotalAmount>
+    <ClassName>BravoEvaluator</ClassName>
+    <DataMember>TotalAmount</DataMember>
+    <Expr>Amount + TaxAmount - DiscountAmount</Expr>
+</Eval_TotalAmount>`
+  },
+  bravoserverconstraint: {
+    name: "BravoServerConstraint",
+    desc: "Ràng buộc và đồng bộ dữ liệu thông qua Stored Procedure máy chủ hoặc CommandKey. Cho phép tra cứu (lookup) dữ liệu nhiều cột cùng lúc từ SQL và ánh xạ ngược về dòng chi tiết.",
+    properties: [
+      "CommandKey: Tên Command hoặc Stored Procedure trên server",
+      "zSourceReturnMember: Chuỗi ánh xạ danh sách cột trả về (VD: ItemId=ItemId;ItemName=ItemName;Unit=Unit)",
+      "Parameters: Tham số truyền vào Stored Procedure"
+    ],
+    example: `<Constraint_ItemLookup>
+    <ClassName>BravoServerConstraint</ClassName>
+    <CommandKey>usp_B10Item_Lookup</CommandKey>
+    <zSourceReturnMember>ItemId=ItemId;ItemName=ItemName;Unit=Unit;UnitPrice=StandardPrice</zSourceReturnMember>
+</Constraint_ItemLookup>`
+  },
+  bravouniquekeyvalidator: {
+    name: "BravoUniqueKeyValidator",
+    desc: "Bộ kiểm tra tính duy nhất (Unique) trên các dòng của lưới chi tiết, ngăn chặn người dùng nhập trùng lặp khóa chính (ví dụ trùng ItemId hoặc trùng số seri) trên cùng một chứng từ.",
+    properties: [
+      "DataMember: Cột cần kiểm tra duy nhất",
+      "Message: Thông báo lỗi hiển thị khi phát hiện trùng"
+    ],
+    example: `<Val_UniqueItem>
+    <ClassName>BravoUniqueKeyValidator</ClassName>
+    <DataMember>ItemId</DataMember>
+    <Message>Mã vật tư hàng hóa không được trùng trên các dòng chi tiết!</Message>
+</Val_UniqueItem>`
+  },
+  bravolinkcommand: {
+    name: "BravoLinkCommand",
+    desc: "Lệnh liên kết dữ liệu giữa các chứng từ trong luồng nghiệp vụ (ví dụ: lấy dữ liệu từ Đơn hàng bán sang Lệnh xuất kho, từ Hóa đơn sang Phiếu thu).",
+    properties: [
+      "SourceDoc: Mã chứng từ nguồn",
+      "TargetDoc: Mã chứng từ đích",
+      "Mapping: Quy tắc map trường dữ liệu giữa 2 chứng từ"
+    ],
+    example: `<Cmd_LinkSaleOrder>
+    <ClassName>BravoLinkCommand</ClassName>
+    <SourceDoc>SO</SourceDoc>
+    <TargetDoc>PX</TargetDoc>
+</Cmd_LinkSaleOrder>`
+  }
+};
 async function handleToolCall(name, args) {
   switch (name) {
     case "bravogen_ask_knowledge": {
@@ -817,6 +952,20 @@ async function handleToolCall(name, args) {
       const model = String(args.model || "bravo-insight");
       const systemPrompt = args.system_prompt ? String(args.system_prompt) : undefined;
       const includeReasoning = args.include_reasoning !== false;
+      const cacheFirst = args.cache_first === true;
+      if (cacheFirst && question) {
+        const qLower = question.toLowerCase();
+        for (const conv of knowledgeDb.conversations) {
+          if (conv.title.toLowerCase().includes(qLower)) {
+            const assistantMsg = conv.messages.find((m) => m.role === "assistant" && m.text);
+            if (assistantMsg) {
+              return `### [Kho Tri Thức Cục Bộ (0 Credit Tiêu Tốn - Nguồn: ${conv.title})]
+
+${assistantMsg.text}`;
+            }
+          }
+        }
+      }
       const res = await pool.chatCompletion(question, {
         model,
         systemPrompt
@@ -978,9 +1127,10 @@ ${d.code}
 `);
     }
     case "bravogen_get_layout_xml_reference": {
-      const tag = args.tag_or_class ? String(args.tag_or_class).trim().toLowerCase() : "";
+      const rawInput = args.tag_or_class ? String(args.tag_or_class).trim() : "";
+      const queryLower = rawInput.toLowerCase();
       const tags = knowledgeDb.xml_tags;
-      if (!tag) {
+      if (!queryLower) {
         return [
           `# Quy Chuẩn Khai Báo Layout XML Bravo 10:`,
           `Hệ thống ghi nhận ${tags.length} thẻ XML và Class Evaluator thông dụng.`,
@@ -996,14 +1146,27 @@ ${d.code}
         ].join(`
 `);
       }
-      const matches = tags.filter((t) => t.toLowerCase().includes(tag));
-      return [
-        `# Kết Quả Tra Cứu Thẻ XML cho '${tag}':`,
-        matches.length > 0 ? matches.map((m) => `- \`<${m}>\``).join(`
-`) : `Không tìm thấy thẻ có tên '${tag}'.`,
-        "",
-        `Để tra cứu chi tiết cách dùng của thẻ này trong mã nguồn thực tế, bạn có thể gọi 'bravogen_search_knowledge' hoặc 'bravogen_ask_knowledge'.`
-      ].join(`
+      const matchedClassKey = Object.keys(STANDARD_LAYOUT_CLASSES).find((k) => k === queryLower || STANDARD_LAYOUT_CLASSES[k].name.toLowerCase().includes(queryLower));
+      const matchedTags = tags.filter((t) => t.toLowerCase().includes(queryLower));
+      const sections = [];
+      if (matchedClassKey) {
+        const cls = STANDARD_LAYOUT_CLASSES[matchedClassKey];
+        sections.push(`# Tài Liệu Class Layout XML: ${cls.name}`, `- **Mô tả:** ${cls.desc}`, `- **Các thuộc tính cốt lõi:**
+${cls.properties.map((p) => `  * \`${p.split(":")[0]}\`: ${p.split(":")[1] || ""}`).join(`
+`)}`, `- **Mẫu khai báo XML chuẩn:**
+\`\`\`xml
+${cls.example}
+\`\`\``);
+      }
+      if (matchedTags.length > 0) {
+        sections.push(`### Thẻ XML liên quan khớp trong kho cấu hình (${matchedTags.length} thẻ):`, matchedTags.map((m) => `- \`<${m}>\``).join(`
+`));
+      }
+      if (sections.length === 0) {
+        return `Không tìm thấy thẻ XML hoặc Class Evaluator nào phù hợp với '${rawInput}'. Bạn có thể dùng 'bravogen_search_knowledge' hoặc 'bravogen_ask_knowledge' để tìm kiếm ngữ cảnh đầy đủ.`;
+      }
+      return sections.join(`
+
 `);
     }
     case "bravogen_search_knowledge": {
@@ -1099,13 +1262,64 @@ ${m.reasoning ? `*Suy luận:*
 
 `);
     }
+    case "bravogen_sync_knowledge": {
+      const client = await pool.getActiveClient();
+      const exportData = await client.exportUserData();
+      if (!exportData || !exportData.conversations) {
+        return "Không thể xuất dữ liệu từ server BravoGen. Vui lòng kiểm tra lại kết nối mạng hoặc token đăng nhập.";
+      }
+      let newCount = 0;
+      let updatedCount = 0;
+      const existingMap = new Map(knowledgeDb.conversations.map((c) => [c.id, c]));
+      for (const conv of exportData.conversations) {
+        const mappedMessages = conv.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          text: m.text || "",
+          has_reasoning: Boolean(m.reasoning),
+          created_at: m.created_at
+        }));
+        const convItem = {
+          id: conv.id,
+          title: conv.title,
+          model: conv.model,
+          message_count: mappedMessages.length,
+          messages: mappedMessages
+        };
+        if (existingMap.has(conv.id)) {
+          existingMap.set(conv.id, convItem);
+          updatedCount++;
+        } else {
+          existingMap.set(conv.id, convItem);
+          newCount++;
+        }
+      }
+      knowledgeDb.conversations = Array.from(existingMap.values());
+      knowledgeDb.total_conversations = knowledgeDb.conversations.length;
+      try {
+        fs3.writeFileSync(knowledgeDbPath, JSON.stringify(knowledgeDb, null, 2), "utf-8");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[Sync] Could not persist to ${knowledgeDbPath}:`, msg);
+      }
+      const totalMsgs = knowledgeDb.conversations.reduce((sum, c) => sum + c.messages.length, 0);
+      return [
+        `# Đồng Bộ Tri Thức BravoGen Thành Công (0 Credit Tiêu Tốn)`,
+        `- Số cuộc hội thoại mới thêm: **${newCount}**`,
+        `- Số cuộc hội thoại cập nhật: **${updatedCount}**`,
+        `- Tổng số cuộc hội thoại trong kho offline: **${knowledgeDb.total_conversations}**`,
+        `- Tổng số tin nhắn kỹ thuật offline: **${totalMsgs}**`,
+        "",
+        `Toàn bộ tri thức đã được nạp vào bộ nhớ cục bộ. Giờ đây bạn có thể dùng 'bravogen_search_knowledge' hoặc 'bravogen_ask_knowledge' (với cache_first) để tra cứu mọi giải pháp với tốc độ < 5ms mà không tiêu tốn thêm bất kỳ credit nào.`
+      ].join(`
+`);
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
 }
 var rl = readline.createInterface({
   input: process.stdin,
-  output: process.stdout,
   terminal: false
 });
 rl.on("line", async (line) => {

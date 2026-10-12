@@ -98,6 +98,11 @@ const TOOLS = [
           default: true,
           description: "Có trả về nội dung suy luận logic từng bước (reasoning_content) không.",
         },
+        cache_first: {
+          type: "boolean",
+          default: false,
+          description: "Nếu bật true, ưu tiên tìm kiếm câu trả lời đã có trong kho tri thức cục bộ trước để không tiêu tốn credit AI.",
+        },
       },
       required: ["question"],
     },
@@ -253,7 +258,74 @@ const TOOLS = [
       required: ["conversation_id"],
     },
   },
+  {
+    name: "bravogen_sync_knowledge",
+    description:
+      "Đồng bộ toàn bộ lịch sử hỏi đáp, đoạn code mẫu và giải pháp kỹ thuật từ server BravoGen về cơ sở dữ liệu tri thức offline cục bộ (HOÀN TOÀN KHÔNG TỐN CREDIT/QUOTA). Sau khi đồng bộ, AI agent và lập trình viên có thể tra cứu toàn văn mọi giải pháp với tốc độ tức thì mà không mất thêm lượt gọi nào.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
+const STANDARD_LAYOUT_CLASSES: Record<
+  string,
+  { name: string; desc: string; properties: string[]; example: string }
+> = {
+  bravomoneyevaluator: {
+    name: "BravoMoneyEvaluator",
+    desc: "Class Evaluator chuyên biệt cho tính toán tiền tệ, tài chính trong Bravo 10. Hỗ trợ tự động làm tròn theo đồng tiền (zResultDecimalRound), xử lý sai số làm tròn (zResultMarginValue), tính chiết khấu nhiều mức, thuế TTĐB và công thức phối hợp số lượng * đơn giá.",
+    properties: [
+      "zMoneyValue: Biểu thức giá trị tiền tệ (VD: ISNULL(UnitCost,0) * ISNULL(DiscountRate,0))",
+      "zNumberValue: Biểu thức giá trị số lượng hoặc tỷ lệ",
+      "zFormula: Công thức phối hợp định dạng placeholder (VD: {0}/(1+{1})*{1})",
+      "zResultDecimalRound: Làm tròn tiền tệ theo thiết lập loại tiền (Currency('DecimalRound'))",
+      "zResultMarginValue: Ngưỡng chấp nhận sai số làm tròn",
+      "DataMember: Tên cột dữ liệu đích nhận kết quả",
+    ],
+    example: `<Eval_DiscountAmount>\n    <ClassName>BravoMoneyEvaluator</ClassName>\n    <DataMember>DiscountAmount</DataMember>\n    <zResultDecimalRound>Currency('DecRound_VND')</zResultDecimalRound>\n    <zMoneyValue>OriginalUnitPrice - UnitPrice</zMoneyValue>\n    <zNumberValue>Quantity</zNumberValue>\n</Eval_DiscountAmount>`,
+  },
+  bravoevaluator: {
+    name: "BravoEvaluator",
+    desc: "Bộ đánh giá biểu thức tổng quát của Bravo 10. Dùng tính toán các trường số học thông thường, biểu thức logic điều kiện (IIF, AND, OR), điều khiển ẩn hiện controls hoặc đặt giá trị mặc định.",
+    properties: [
+      "Expr / Value: Biểu thức toán học hoặc logic",
+      "DataMember: Cột nhận giá trị tính toán",
+      "Condition: Điều kiện kích hoạt",
+      "ColumnChanged: Danh sách cột theo dõi thay đổi để kích hoạt Evaluator",
+    ],
+    example: `<Eval_TotalAmount>\n    <ClassName>BravoEvaluator</ClassName>\n    <DataMember>TotalAmount</DataMember>\n    <Expr>Amount + TaxAmount - DiscountAmount</Expr>\n</Eval_TotalAmount>`,
+  },
+  bravoserverconstraint: {
+    name: "BravoServerConstraint",
+    desc: "Ràng buộc và đồng bộ dữ liệu thông qua Stored Procedure máy chủ hoặc CommandKey. Cho phép tra cứu (lookup) dữ liệu nhiều cột cùng lúc từ SQL và ánh xạ ngược về dòng chi tiết.",
+    properties: [
+      "CommandKey: Tên Command hoặc Stored Procedure trên server",
+      "zSourceReturnMember: Chuỗi ánh xạ danh sách cột trả về (VD: ItemId=ItemId;ItemName=ItemName;Unit=Unit)",
+      "Parameters: Tham số truyền vào Stored Procedure",
+    ],
+    example: `<Constraint_ItemLookup>\n    <ClassName>BravoServerConstraint</ClassName>\n    <CommandKey>usp_B10Item_Lookup</CommandKey>\n    <zSourceReturnMember>ItemId=ItemId;ItemName=ItemName;Unit=Unit;UnitPrice=StandardPrice</zSourceReturnMember>\n</Constraint_ItemLookup>`,
+  },
+  bravouniquekeyvalidator: {
+    name: "BravoUniqueKeyValidator",
+    desc: "Bộ kiểm tra tính duy nhất (Unique) trên các dòng của lưới chi tiết, ngăn chặn người dùng nhập trùng lặp khóa chính (ví dụ trùng ItemId hoặc trùng số seri) trên cùng một chứng từ.",
+    properties: [
+      "DataMember: Cột cần kiểm tra duy nhất",
+      "Message: Thông báo lỗi hiển thị khi phát hiện trùng",
+    ],
+    example: `<Val_UniqueItem>\n    <ClassName>BravoUniqueKeyValidator</ClassName>\n    <DataMember>ItemId</DataMember>\n    <Message>Mã vật tư hàng hóa không được trùng trên các dòng chi tiết!</Message>\n</Val_UniqueItem>`,
+  },
+  bravolinkcommand: {
+    name: "BravoLinkCommand",
+    desc: "Lệnh liên kết dữ liệu giữa các chứng từ trong luồng nghiệp vụ (ví dụ: lấy dữ liệu từ Đơn hàng bán sang Lệnh xuất kho, từ Hóa đơn sang Phiếu thu).",
+    properties: [
+      "SourceDoc: Mã chứng từ nguồn",
+      "TargetDoc: Mã chứng từ đích",
+      "Mapping: Quy tắc map trường dữ liệu giữa 2 chứng từ",
+    ],
+    example: `<Cmd_LinkSaleOrder>\n    <ClassName>BravoLinkCommand</ClassName>\n    <SourceDoc>SO</SourceDoc>\n    <TargetDoc>PX</TargetDoc>\n</Cmd_LinkSaleOrder>`,
+  },
+};
 
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<string> {
   switch (name) {
@@ -262,7 +334,19 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       const model = String(args.model || "bravo-insight");
       const systemPrompt = args.system_prompt ? String(args.system_prompt) : undefined;
       const includeReasoning = args.include_reasoning !== false;
+      const cacheFirst = args.cache_first === true;
 
+      if (cacheFirst && question) {
+        const qLower = question.toLowerCase();
+        for (const conv of knowledgeDb.conversations) {
+          if (conv.title.toLowerCase().includes(qLower)) {
+            const assistantMsg = conv.messages.find((m) => m.role === "assistant" && m.text);
+            if (assistantMsg) {
+              return `### [Kho Tri Thức Cục Bộ (0 Credit Tiêu Tốn - Nguồn: ${conv.title})]\n\n${assistantMsg.text}`;
+            }
+          }
+        }
+      }
       const res = await pool.chatCompletion(question, {
         model,
         systemPrompt,
@@ -430,10 +514,11 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     }
 
     case "bravogen_get_layout_xml_reference": {
-      const tag = args.tag_or_class ? String(args.tag_or_class).trim().toLowerCase() : "";
+      const rawInput = args.tag_or_class ? String(args.tag_or_class).trim() : "";
+      const queryLower = rawInput.toLowerCase();
       const tags = knowledgeDb.xml_tags;
 
-      if (!tag) {
+      if (!queryLower) {
         return [
           `# Quy Chuẩn Khai Báo Layout XML Bravo 10:`,
           `Hệ thống ghi nhận ${tags.length} thẻ XML và Class Evaluator thông dụng.`,
@@ -449,15 +534,36 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         ].join("\n");
       }
 
-      const matches = tags.filter((t) => t.toLowerCase().includes(tag));
-      return [
-        `# Kết Quả Tra Cứu Thẻ XML cho '${tag}':`,
-        matches.length > 0
-          ? matches.map((m) => `- \`<${m}>\``).join("\n")
-          : `Không tìm thấy thẻ có tên '${tag}'.`,
-        "",
-        `Để tra cứu chi tiết cách dùng của thẻ này trong mã nguồn thực tế, bạn có thể gọi 'bravogen_search_knowledge' hoặc 'bravogen_ask_knowledge'.`,
-      ].join("\n");
+      const matchedClassKey = Object.keys(STANDARD_LAYOUT_CLASSES).find(
+        (k) => k === queryLower || STANDARD_LAYOUT_CLASSES[k].name.toLowerCase().includes(queryLower)
+      );
+
+      // class matched via STANDARD_LAYOUT_CLASSES
+      const matchedTags = tags.filter((t) => t.toLowerCase().includes(queryLower));
+      const sections: string[] = [];
+
+      if (matchedClassKey) {
+        const cls = STANDARD_LAYOUT_CLASSES[matchedClassKey];
+        sections.push(
+          `# Tài Liệu Class Layout XML: ${cls.name}`,
+          `- **Mô tả:** ${cls.desc}`,
+          `- **Các thuộc tính cốt lõi:**\n${cls.properties.map((p) => `  * \`${p.split(":")[0]}\`: ${p.split(":")[1] || ""}`).join("\n")}`,
+          `- **Mẫu khai báo XML chuẩn:**\n\`\`\`xml\n${cls.example}\n\`\`\``
+        );
+      }
+
+      if (matchedTags.length > 0) {
+        sections.push(
+          `### Thẻ XML liên quan khớp trong kho cấu hình (${matchedTags.length} thẻ):`,
+          matchedTags.map((m) => `- \`<${m}>\``).join("\n")
+        );
+      }
+
+      if (sections.length === 0) {
+        return `Không tìm thấy thẻ XML hoặc Class Evaluator nào phù hợp với '${rawInput}'. Bạn có thể dùng 'bravogen_search_knowledge' hoặc 'bravogen_ask_knowledge' để tìm kiếm ngữ cảnh đầy đủ.`;
+      }
+
+      return sections.join("\n\n");
     }
 
     case "bravogen_search_knowledge": {
@@ -554,6 +660,65 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         ),
       ].join("\n\n---\n\n");
     }
+    case "bravogen_sync_knowledge": {
+      const client = await pool.getActiveClient();
+      const exportData = await client.exportUserData();
+      if (!exportData || !exportData.conversations) {
+        return "Không thể xuất dữ liệu từ server BravoGen. Vui lòng kiểm tra lại kết nối mạng hoặc token đăng nhập.";
+      }
+
+      let newCount = 0;
+      let updatedCount = 0;
+      const existingMap = new Map(knowledgeDb.conversations.map((c) => [c.id, c]));
+
+      for (const conv of exportData.conversations) {
+        const mappedMessages = conv.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          text: m.text || "",
+          has_reasoning: Boolean(m.reasoning),
+          created_at: m.created_at,
+        }));
+
+        const convItem = {
+          id: conv.id,
+          title: conv.title,
+          model: conv.model,
+          message_count: mappedMessages.length,
+          messages: mappedMessages,
+        };
+
+        if (existingMap.has(conv.id)) {
+          existingMap.set(conv.id, convItem);
+          updatedCount++;
+        } else {
+          existingMap.set(conv.id, convItem);
+          newCount++;
+        }
+      }
+
+      knowledgeDb.conversations = Array.from(existingMap.values());
+      knowledgeDb.total_conversations = knowledgeDb.conversations.length;
+
+      try {
+        fs.writeFileSync(knowledgeDbPath, JSON.stringify(knowledgeDb, null, 2), "utf-8");
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[Sync] Could not persist to ${knowledgeDbPath}:`, msg);
+      }
+
+      const totalMsgs = knowledgeDb.conversations.reduce((sum, c) => sum + c.messages.length, 0);
+
+      return [
+        `# Đồng Bộ Tri Thức BravoGen Thành Công (0 Credit Tiêu Tốn)`,
+        `- Số cuộc hội thoại mới thêm: **${newCount}**`,
+        `- Số cuộc hội thoại cập nhật: **${updatedCount}**`,
+        `- Tổng số cuộc hội thoại trong kho offline: **${knowledgeDb.total_conversations}**`,
+        `- Tổng số tin nhắn kỹ thuật offline: **${totalMsgs}**`,
+        "",
+        `Toàn bộ tri thức đã được nạp vào bộ nhớ cục bộ. Giờ đây bạn có thể dùng 'bravogen_search_knowledge' hoặc 'bravogen_ask_knowledge' (với cache_first) để tra cứu mọi giải pháp với tốc độ < 5ms mà không tiêu tốn thêm bất kỳ credit nào.`,
+      ].join("\n");
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);
@@ -563,7 +728,6 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
 // JSON-RPC stdio handler
 const rl = readline.createInterface({
   input: process.stdin,
-  output: process.stdout,
   terminal: false,
 });
 

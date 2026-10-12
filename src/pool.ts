@@ -118,27 +118,19 @@ export class AccountPool {
         try {
           const content = fs.readFileSync(p, "utf-8");
           const parsed = JSON.parse(content) as unknown;
-          if (Array.isArray(parsed)) {
-            for (let i = 0; i < parsed.length; i++) {
-              const item = parsed[i];
+          const rawList = Array.isArray(parsed)
+            ? parsed
+            : parsed && typeof parsed === "object" && "accounts" in parsed && Array.isArray(parsed.accounts)
+              ? parsed.accounts
+              : null;
+
+          if (rawList) {
+            for (let i = 0; i < rawList.length; i++) {
+              const item = rawList[i];
               if (item && typeof item === "object" && "username" in item && "password" in item) {
                 const u = String(item.username);
                 const pwd = String(item.password);
-                const bUrl = "baseUrl" in item ? String(item.baseUrl) : undefined;
-                const id = "id" in item ? String(item.id) : `acc_${i + 1}_${u.split("@")[0]}`;
-                results.push({ id, username: u, password: pwd, baseUrl: bUrl });
-              }
-            }
-            if (results.length > 0) {
-              console.error(`[AccountPool] Loaded ${results.length} account(s) from ${p}`);
-              return results;
-            }
-          } else if (parsed && typeof parsed === "object" && "accounts" in parsed && Array.isArray(parsed.accounts)) {
-            for (let i = 0; i < parsed.accounts.length; i++) {
-              const item = parsed.accounts[i];
-              if (item && typeof item === "object" && "username" in item && "password" in item) {
-                const u = String(item.username);
-                const pwd = String(item.password);
+                if (u.toUpperCase() === "YOUR_BRAVO_USERNAME" || !u.trim() || !pwd.trim()) continue;
                 const bUrl = "baseUrl" in item ? String(item.baseUrl) : undefined;
                 const id = "id" in item ? String(item.id) : `acc_${i + 1}_${u.split("@")[0]}`;
                 results.push({ id, username: u, password: pwd, baseUrl: bUrl });
@@ -217,9 +209,9 @@ export class AccountPool {
     return results;
   }
 
-  public async updateAccountQuota(acc: AccountState): Promise<void> {
+  public async updateAccountQuota(acc: AccountState, force: boolean = false): Promise<void> {
     try {
-      const status: RateLimitStatus | null = await acc.client.getRateLimitStatus();
+      const status: RateLimitStatus | null = await acc.client.getRateLimitStatus(force);
       acc.lastChecked = Date.now();
       if (status && status.computed) {
         acc.remaining5hRequests = status.computed.remaining5hRequests;
@@ -247,10 +239,9 @@ export class AccountPool {
     if (this.accounts.length === 0) return null;
 
     const now = Date.now();
-    for (const acc of this.accounts) {
-      if (now - acc.lastChecked > 60000) {
-        await this.updateAccountQuota(acc);
-      }
+    const staleAccounts = this.accounts.filter((a) => now - a.lastChecked > 30000);
+    if (staleAccounts.length > 0) {
+      await Promise.allSettled(staleAccounts.map((a) => this.updateAccountQuota(a)));
     }
 
     const available = this.accounts.filter(
@@ -267,16 +258,15 @@ export class AccountPool {
       return available[0];
     }
 
-    for (const acc of this.accounts) {
-      if (acc.resetsAt5h) {
-        const resetEpoch = new Date(acc.resetsAt5h).getTime();
-        if (now >= resetEpoch) {
-          await this.updateAccountQuota(acc);
-          if (acc.status === "healthy" && acc.remaining5hRequests > 0) {
-            return acc;
-          }
-        }
-      }
+    const resetCandidates = this.accounts.filter(
+      (a) => a.resetsAt5h && now >= new Date(a.resetsAt5h).getTime()
+    );
+    if (resetCandidates.length > 0) {
+      await Promise.allSettled(resetCandidates.map((a) => this.updateAccountQuota(a, true)));
+      const revived = this.accounts.find(
+        (a) => a.status === "healthy" && a.remaining5hRequests > 0
+      );
+      if (revived) return revived;
     }
 
     return null;
@@ -378,11 +368,12 @@ export class AccountPool {
     };
   }
 
-  public async getPoolOverview(): Promise<PoolOverview> {
-    for (const acc of this.accounts) {
-      await this.updateAccountQuota(acc);
+  public async getPoolOverview(force: boolean = false): Promise<PoolOverview> {
+    const now = Date.now();
+    const targets = this.accounts.filter((a) => force || now - a.lastChecked > 15000);
+    if (targets.length > 0) {
+      await Promise.allSettled(targets.map((a) => this.updateAccountQuota(a, force)));
     }
-
     const healthyCount = this.accounts.filter((a) => a.status === "healthy").length;
     const throttledCount = this.accounts.filter((a) => a.status === "throttled").length;
     const total5hReq = this.accounts.reduce((sum, a) => sum + a.remaining5hRequests, 0);
